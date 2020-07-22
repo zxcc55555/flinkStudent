@@ -9,6 +9,9 @@ import org.apache.flink.util.Collector;
 import org.apache.flink.walkthrough.common.entity.Alert;
 import org.apache.flink.walkthrough.common.entity.Transaction;
 
+/**
+ * @author 60238
+ */
 public class FraudDetector extends KeyedProcessFunction<Long, Transaction, Alert> {
 
     private static final long serialVersionUID = 1L;
