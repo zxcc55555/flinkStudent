@@ -14,6 +14,7 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.AssignerWithPeriodicWatermarks;
 import org.apache.flink.streaming.api.functions.AssignerWithPunctuatedWatermarks;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+import org.apache.flink.streaming.api.functions.ProcessFunction;
 import org.apache.flink.streaming.api.functions.source.SourceFunction;
 import org.apache.flink.streaming.api.functions.windowing.ProcessAllWindowFunction;
 import org.apache.flink.streaming.api.watermark.Watermark;
@@ -64,8 +65,6 @@ public class ProcessTimeJob {
                     @Override
                     public void process(Context context, Iterable<Tuple2<Integer, Long>> elements, Collector<Tuple2<Integer, Long>> out) throws Exception {
                         Iterator<Tuple2<Integer, Long>> iterator = elements.iterator();
-                        iterator
-                        out.collect();
                     }
 
                     @Override
@@ -87,7 +86,7 @@ public class ProcessTimeJob {
                 });
     }
 
-/*    private static void event() throws Exception {
+    private static void event() throws Exception {
         StreamExecutionEnvironment e = StreamExecutionEnvironment.getExecutionEnvironment();
         DataStreamSource<Tuple2<Integer, Long>> dataStreamSource = e.addSource(new SourceFunction<Tuple2<Integer, Long>>() {
             private volatile boolean stop = false;
@@ -110,47 +109,41 @@ public class ProcessTimeJob {
             }
         }).setParallelism(1);
         e.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
-        KeyedStream<Tuple2<Integer, Long>, Integer> integerIntegerKeyedStream = dataStreamSource.keyBy(v -> v.f0 % 2);
-        SingleOutputStreamOperator<Tuple2<Integer, Long>> tuple2SingleOutputStreamOperator = integerIntegerKeyedStream.
-                assignTimestampsAndWatermarks(new AssignerWithPunctuatedWatermarks<Tuple2<Integer, Long>>() {
+        dataStreamSource.
+                assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarks<Tuple2<Integer, Long>>() {
+            private final long maxTimeLag = 4000;
 
-                    @Nullable
-                    @Override
-                    public Watermark checkAndGetNextWatermark(Tuple2<Integer, Long> lastElement, long extractedTimestamp) {
-                        return null;
-                    }
+            @Nullable
+            @Override
+            public Watermark getCurrentWatermark() {
+                return new Watermark(System.currentTimeMillis() - maxTimeLag);
+            }
 
-                    @Override
-                    public long extractTimestamp(Tuple2<Integer, Long> element, long previousElementTimestamp) {
-                        return 0;
-                    }
-                });
-        tuple2SingleOutputStreamOperator.
-                process(new KeyedProcessFunction<Integer, Tuple2<Integer, Long>, Tuple2<Integer, Long>>() {
-                    @Override
-                    public void processElement(Tuple2<Integer, Long> value, Context ctx, Collector<Tuple2<Integer, Long>> out) throws Exception {
-
-                    }
-
-                    MapState<Long, Integer> mapState;
-
-
-                    @Override
-                    public void open(Configuration parameters) throws Exception {
-                        super.open(parameters);
-                        MapStateDescriptor<Long, Integer> mapStateDescriptor = new MapStateDescriptor<>(
-                                "sum",
-                                Types.LONG,
-                                Types.INT
-                        );
-                        mapState = getRuntimeContext().getMapState(mapStateDescriptor);
-                    }
-
-                    @Override
-                    public void clear(Context context) throws Exception {
-                        super.clear(context);
-                        mapState.clear();
-                    }
-                });
-    }*/
+            @Override
+            public long extractTimestamp(Tuple2<Integer, Long> element, long previousElementTimestamp) {
+                return element.f1;
+            }
+        }).keyBy(v -> v.f0 % 2).process(new KeyedProcessFunction<Integer, Tuple2<Integer, Long>, Tuple2<Integer, Long>>() {
+            MapState<Long, Integer> mapState;
+            @Override
+            public void processElement(Tuple2<Integer, Long> value, Context ctx, Collector<Tuple2<Integer, Long>> out) throws Exception {
+                long watermark = ctx.timerService().currentWatermark();
+                Integer integer = mapState.get(watermark);
+                integer = integer == null ? 0 : integer;
+                mapState.put(watermark, integer + value.f0);
+                out
+            }
+            @Override
+            public void open(Configuration parameters) throws Exception {
+                super.open(parameters);
+                MapStateDescriptor<Long, Integer> mapStateDescriptor = new MapStateDescriptor<>(
+                        "sum",
+                        Types.LONG,
+                        Types.INT
+                );
+                mapState = getRuntimeContext().getMapState(mapStateDescriptor);
+            }
+        }).print().setParallelism(2);
+        e.execute("evementTime");
+    }
 }
