@@ -15,6 +15,7 @@ import org.apache.flink.streaming.api.functions.AssignerWithPeriodicWatermarks;
 import org.apache.flink.streaming.api.functions.AssignerWithPunctuatedWatermarks;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.streaming.api.functions.ProcessFunction;
+import org.apache.flink.streaming.api.functions.sink.SinkFunction;
 import org.apache.flink.streaming.api.functions.source.SourceFunction;
 import org.apache.flink.streaming.api.functions.windowing.ProcessAllWindowFunction;
 import org.apache.flink.streaming.api.watermark.Watermark;
@@ -22,12 +23,14 @@ import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindo
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
+import org.apache.flink.walkthrough.common.sink.AlertSink;
 
 import javax.annotation.Nullable;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ProcessTimeJob {
-    private static List<Integer> data = Lists.newArrayList(1, 2, 3, 4, 5);
+    private static List<Integer> data = Lists.newArrayList(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
 
     public static void main(String[] args) throws Exception {
         event();
@@ -54,7 +57,7 @@ public class ProcessTimeJob {
             public void cancel() {
                 stop = true;
             }
-        }).setParallelism(1);
+        });
         e.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
         KeyedStream<Tuple2<Integer, Long>, Integer> integerIntegerKeyedStream = dataStreamSource.keyBy(v -> v.f0 % 2);
         integerIntegerKeyedStream.windowAll(TumblingEventTimeWindows.of(Time.seconds(4)))
@@ -96,10 +99,12 @@ public class ProcessTimeJob {
             public void run(SourceContext<Tuple2<Integer, Long>> ctx) throws Exception {
                 int i = 0;
                 while (!stop && i < data.size()) {
+                    long time = System.currentTimeMillis() - random.nextInt(400);
                     ctx.collectWithTimestamp(
                             Tuple2.of(data.get(i++), System.currentTimeMillis()),
-                            System.currentTimeMillis() - random.nextInt(400));
+                            time);
                     Thread.sleep(200);
+                    ctx.emitWatermark(new Watermark(time/400));
                 }
             }
 
@@ -107,12 +112,12 @@ public class ProcessTimeJob {
             public void cancel() {
                 stop = true;
             }
-        }).setParallelism(1);
+        });
         e.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
         dataStreamSource.
                 //AssignerWithPeriodicWatermarks 定期生成 AssignerWithPunctuatedWatermarks 根据特殊记录生成
                 assignTimestampsAndWatermarks(new AssignerWithPeriodicWatermarks<Tuple2<Integer, Long>>() {
-            private final long timeLate = 400L;
+            private final long timeLate = 800L;
             private long maxTime = 0L;
 
             @Nullable
@@ -143,20 +148,31 @@ public class ProcessTimeJob {
                     Integer sum = value.f0 + integer;
                     mapState.put(watermark, sum);
                 }else{
-                    //eventTime定时器
-                    ctx.timerService().registerEventTimeTimer(ctx.timestamp() + eventTime);
+                    mapState.put(watermark, value.f0);
                 }
+                //eventTime定时器
+                ctx.timerService().registerEventTimeTimer(ctx.timestamp() + eventTime);
+                if (value.f0 == 10 || value.f0 == 9){
+                    Thread.sleep(10000);
+                    Iterator<Map.Entry<Long, Integer>> iterator = mapState.iterator();
+                    while(iterator.hasNext()){
+                        Map.Entry<Long, Integer> next = iterator.next();
+                        out.collect(Tuple2.of(next.getValue(), next.getKey()));
+                        System.out.println("lirui:"+ Tuple2.of(next.getValue(), next.getKey()));
+                        iterator.remove();
+                    }
+                }
+
             }
 
             @Override
             public void onTimer(long timestamp, OnTimerContext ctx, Collector<Tuple2<Integer, Long>> out) throws Exception {
                 super.onTimer(timestamp, ctx, out);
-                System.out.println(mapState);
                 Iterator<Map.Entry<Long, Integer>> iterator = mapState.iterator();
                 while(iterator.hasNext()){
                     Map.Entry<Long, Integer> next = iterator.next();
-                    if(ctx.timerService().currentWatermark() > next.getKey()){
-                        System.out.println(Tuple2.of(next.getValue(), next.getKey()));
+                    if (iterator.hasNext()){
+                        System.out.println("lirui:"+ Tuple2.of(next.getValue(), next.getKey()));
                         out.collect(Tuple2.of(next.getValue(), next.getKey()));
                         iterator.remove();
                     }
@@ -173,8 +189,8 @@ public class ProcessTimeJob {
                 );
                 mapState = getRuntimeContext().getMapState(mapStateDescriptor);
             }
-        }).print().setParallelism(2);
 
-        e.execute("evementTime");
+        }).print().setParallelism(2);
+        e.execute("eventTime");
     }
 }
