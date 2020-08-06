@@ -29,6 +29,9 @@ import javax.annotation.Nullable;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * @author Administrator
+ */
 public class ProcessTimeJob {
     private static List<Integer> data = Lists.newArrayList(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
 
@@ -120,7 +123,6 @@ public class ProcessTimeJob {
             private final long timeLate = 800L;
             private long maxTime = 0L;
 
-            @Nullable
             @Override
             public Watermark getCurrentWatermark() {
                 return new Watermark(maxTime / timeLate);
